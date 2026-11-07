@@ -1,7 +1,8 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
-import { AhorramasProvider, parseSearchPage, parseUnitPrice } from '../src/providers/ahorramas';
+import { spawnSync } from 'node:child_process';
+import { AhorramasProvider, AHORRAMAS_MAX_HTML_BYTES, parseProductTile, parseSearchPage, parseUnitPrice } from '../src/providers/ahorramas';
 
 const fixture = (name: string) =>
   fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
@@ -64,6 +65,39 @@ async function main() {
       () => parseSearchPage(fixture('ahorramas-unexpected.html')),
       /unexpected search HTML/i
     );
+  });
+
+  await check('bounds malformed-token processing in both exported parsers', () => {
+    // A separate process lets the timeout interrupt a synchronous regression.
+    const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', `
+      const assert = require('node:assert');
+      const { parseSearchPage, parseProductTile } = require('./src/providers/ahorramas');
+      for (const parse of [parseSearchPage, parseProductTile]) {
+        for (const prefix of ['<a', '</a', '<!', '<!--']) {
+          assert.throws(() => parse(prefix.repeat(100000)), /unterminated HTML/);
+        }
+      }
+    `], { cwd: path.join(__dirname, '..'), timeout: 5000, encoding: 'utf8' });
+    assert.ifError(result.error);
+    assert.strictEqual(result.status, 0, result.stderr);
+  });
+
+  await check('enforces the UTF-8 HTML size limit before parsing either entrypoint', () => {
+    for (const parse of [parseSearchPage, parseProductTile]) {
+      assert.throws(() => parse('x'.repeat(AHORRAMAS_MAX_HTML_BYTES + 1)), /size limit/);
+      assert.throws(() => parse('é'.repeat(AHORRAMAS_MAX_HTML_BYTES / 2 + 1)), /size limit/);
+    }
+    const emptyPage = '<!-- ignored --> <p>sin resultados</p>';
+    assert.deepStrictEqual(parseSearchPage(emptyPage.padEnd(AHORRAMAS_MAX_HTML_BYTES)), []);
+    const products = fixture('ahorramas-products.html');
+    assert.strictEqual(parseProductTile(products).product_uid, '70865');
+  });
+
+  await check('propagates oversized retailer HTML as an error', async () => {
+    const provider = new AhorramasProvider();
+    assert.strictEqual((provider as any).http.defaults.maxContentLength, AHORRAMAS_MAX_HTML_BYTES);
+    (provider as any).http.get = async () => ({ data: 'x'.repeat(AHORRAMAS_MAX_HTML_BYTES + 1) });
+    await assert.rejects(() => provider.search('leche'), /size limit/);
   });
 
   await check('rejects an empty query before making an HTTP request', async () => {
