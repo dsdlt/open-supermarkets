@@ -78,8 +78,6 @@ export async function tescoCheckout(dryRun: boolean = true): Promise<TescoChecko
     if (dryRun) {
       console.log('\n🔍 DRY RUN MODE');
       console.log('└─ Trolley preview only — no slot booked, no payment requested');
-      const screenshotPath = await savePrivateScreenshot(page, 'tesco-checkout-preview.png');
-      console.log(`Screenshot saved: ${screenshotPath}`);
 
       return {
         order_id: 'DRY_RUN',
@@ -140,9 +138,6 @@ export async function tescoCheckout(dryRun: boolean = true): Promise<TescoChecko
 
     const deliveryCostMatch = finalPageText?.match(/(?:delivery)[:\s]*£(\d+\.?\d*)/i);
     const deliveryCost = deliveryCostMatch ? parseFloat(deliveryCostMatch[1]) : 0;
-
-    const screenshotPath = await savePrivateScreenshot(page, 'tesco-checkout-payment.png');
-    console.log(`Screenshot saved: ${screenshotPath}`);
 
     console.log('\n📊 Order Summary:');
     console.log(`├─ Items total: £${total}`);
