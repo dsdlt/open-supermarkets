@@ -24,6 +24,7 @@ import {
   clearSession,
   getCookieString,
   importSessionFromHeader,
+  importSession,
 } from '../src/providers/tesco-hu/session';
 import { TescoHuAPI, TescoHuSessionError, TESCO_HU } from '../src/providers/tesco-hu/api';
 import { TescoHuProvider, normaliseProduct, normaliseBasket, flattenTaxonomy } from '../src/providers/tesco-hu/index';
@@ -70,13 +71,63 @@ async function main() {
   });
 
   await check('normaliseCookieExport accepts array, {cookies}, object-of-arrays and Capitalised keys', () => {
-    const fromArray = normaliseCookieExport([{ name: 'a', value: '1' }]);
+    const fromArray = normaliseCookieExport([{ name: 'a', value: '1', domain: '.tesco.hu' }]);
     assert.strictEqual(fromArray.length, 1);
     const fromWrapped = normaliseCookieExport({ cookies: [{ Name: 'b', Value: '2', Domain: 'www.tesco.hu' }] });
     assert.deepStrictEqual([fromWrapped[0].name, fromWrapped[0].value, fromWrapped[0].domain], ['b', '2', 'www.tesco.hu']);
     const fromMap = normaliseCookieExport({ 'tesco.hu': [{ name: 'c', value: '3' }], 'x.hu': [{ name: 'd', value: '4' }] });
-    assert.strictEqual(fromMap.length, 2);
+    assert.strictEqual(fromMap.length, 1);
+    assert.strictEqual(fromMap[0].domain, 'tesco.hu');
     assert.throws(() => normaliseCookieExport([{ name: 'no-value' }]), /No usable cookies/);
+  });
+
+  await check('JSON exports exclude foreign, missing and lookalike domains', () => {
+    const allowed = ['.tesco.hu', 'www.tesco.hu', 'bevasarlas.tesco.hu', 'xapi.tesco.com', '.TESCO.HU'];
+    const denied = ['example.com', 'tesco.com', 'tesco.hu.evil.test', 'eviltesco.hu', 'other.tesco.hu', '', undefined, null, 123];
+    const cookies = [...allowed, ...denied].map((domain, i) => ({ name: `c${i}`, value: 'fake', domain }));
+    for (const raw of [cookies, { cookies, origins: [] }]) {
+      assert.deepStrictEqual(normaliseCookieExport(raw).map(c => c.domain), allowed);
+    }
+    assert.throws(() => normaliseCookieExport([{ name: 'secret', value: 'fake' }]), /No usable cookies/);
+    assert.throws(() => normaliseCookieExport({
+      'example.com': [{ name: 'secret', value: 'fake', domain: '.tesco.hu' }],
+      'tesco.hu': [{ name: 'secret', value: 'fake', domain: 'example.com' }],
+    }), /No usable cookies/);
+  });
+
+  await check('file import persists only permitted cookies and installs only those on xapi', () => {
+    const exportFile = path.join(tmpDir, 'export.json');
+    try {
+      fs.writeFileSync(exportFile, JSON.stringify({
+        'bevasarlas.tesco.hu': [{ name: 'hu_session', value: 'fake-hu' }],
+        'example.com': [{ name: 'private_session', value: 'fake-private' }],
+      }));
+      const session = importSession(exportFile, tmpFile);
+      assert.deepStrictEqual(session.cookies.map(c => c.name), ['hu_session']);
+      assert.deepStrictEqual(loadSession(tmpFile), session);
+      const api = new TescoHuAPI();
+      api.setAuthCookies(getCookieString(loadSession(tmpFile)!));
+      assert.strictEqual((api as any).client.defaults.headers.common.Cookie, 'hu_session=fake-hu');
+    } finally {
+      fs.rmSync(exportFile, { force: true });
+      clearSession(tmpFile);
+    }
+  });
+
+  await check('outbound serialization filters existing saved sessions too', () => {
+    const session = {
+      cookies: [
+        ...parseCookieHeader('hu_session=fake-hu'),
+        { ...parseCookieHeader('private_session=fake-private')[0], domain: 'example.com' },
+        { ...parseCookieHeader('unknown=fake')[0], domain: undefined as any },
+      ],
+      expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      lastLogin: new Date().toISOString(),
+    };
+    saveSession(session, tmpFile);
+    assert.strictEqual(getCookieString(loadSession(tmpFile)!), 'hu_session=fake-hu');
+    assert.strictEqual(getCookieString({ ...session, cookies: session.cookies.slice(1) }), '');
+    clearSession(tmpFile);
   });
 
   await check('inferSessionExpiry uses the earliest auth cookie expiry, else 12h', () => {
