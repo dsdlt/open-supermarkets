@@ -11,6 +11,7 @@
 import { chromium, Page } from 'playwright';
 import * as fs from 'fs';
 import * as os from 'os';
+import { savePrivateScreenshot } from './screenshot';
 
 const SESSION_FILE = `${os.homedir()}/.tesco/session.json`;
 
@@ -77,7 +78,8 @@ export async function tescoCheckout(dryRun: boolean = true): Promise<TescoChecko
     if (dryRun) {
       console.log('\n🔍 DRY RUN MODE');
       console.log('└─ Trolley preview only — no slot booked, no payment requested');
-      await page.screenshot({ path: '/tmp/tesco-checkout-preview.png', fullPage: true });
+      const screenshotPath = await savePrivateScreenshot(page, 'tesco-checkout-preview.png');
+      console.log(`Screenshot saved: ${screenshotPath}`);
 
       return {
         order_id: 'DRY_RUN',
@@ -139,7 +141,8 @@ export async function tescoCheckout(dryRun: boolean = true): Promise<TescoChecko
     const deliveryCostMatch = finalPageText?.match(/(?:delivery)[:\s]*£(\d+\.?\d*)/i);
     const deliveryCost = deliveryCostMatch ? parseFloat(deliveryCostMatch[1]) : 0;
 
-    await page.screenshot({ path: '/tmp/tesco-checkout-payment.png', fullPage: true });
+    const screenshotPath = await savePrivateScreenshot(page, 'tesco-checkout-payment.png');
+    console.log(`Screenshot saved: ${screenshotPath}`);
 
     console.log('\n📊 Order Summary:');
     console.log(`├─ Items total: £${total}`);
