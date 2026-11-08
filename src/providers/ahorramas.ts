@@ -16,6 +16,10 @@ const SEARCH_PATH = '/buscador';
 const GRID_PATH =
   '/on/demandware.store/Sites-Ahorramas-Site/es/Search-UpdateGrid';
 export const AHORRAMAS_PAGE_SIZE = 20;
+/** Maximum UTF-8 HTML size accepted by either string parser and HTTP search responses. */
+export const AHORRAMAS_MAX_HTML_BYTES = 5 * 1024 * 1024;
+/** Bound regex work on untrusted labels; rendered unit prices are short. */
+const MAX_UNIT_PRICE_LABEL_LENGTH = 256;
 
 interface HtmlNode {
   tag: string;
@@ -59,6 +63,21 @@ const VOID_TAGS = new Set([
   'track',
   'wbr',
 ]);
+
+const RAW_TEXT_TAGS = new Set(['script', 'style']);
+
+/** Find a raw-text closing tag without treating its content as markup. */
+function findRawTextClose(html: string, tag: string, from: number): number {
+  const lowerHtml = html.toLowerCase();
+  const needle = `</${tag}`;
+  let index = lowerHtml.indexOf(needle, from);
+  while (index !== -1) {
+    const next = html[index + needle.length] ?? '';
+    if (next === '>' || /\s/.test(next)) return index;
+    index = lowerHtml.indexOf(needle, index + needle.length);
+  }
+  return -1;
+}
 
 function decodeHtml(value: string): string {
   return value
@@ -114,19 +133,45 @@ function parseAttributes(source: string): Record<string, string> {
 
 /** A deliberately small HTML tree builder for the stable semantic markup used by the tiles. */
 function parseHtml(html: string): HtmlNode {
+  if (html.length > AHORRAMAS_MAX_HTML_BYTES ||
+      Buffer.byteLength(html, 'utf8') > AHORRAMAS_MAX_HTML_BYTES) {
+    throw new Error('AhorraMás HTML exceeds the 5 MiB size limit');
+  }
   const root: HtmlNode = { tag: '#root', attrs: {}, children: [], text: '' };
   const stack: HtmlNode[] = [root];
-  const token = /<!--[\s\S]*?-->|<![^>]*>|<\/?[A-Za-z][^>]*>/g;
   let cursor = 0;
-  let match: RegExpExecArray | null;
+  let scan = 0;
 
-  while ((match = token.exec(html))) {
-    const directText = decodeHtml(html.slice(cursor, match.index));
+  // Advance past every scanned token. Never retry an unterminated suffix at
+  // each nested '<', which makes an unanchored token regexp quadratic.
+  while (scan < html.length) {
+    const rawTextTag = stack[stack.length - 1].tag;
+    const rawTextClose = `</${rawTextTag}`;
+    if (RAW_TEXT_TAGS.has(rawTextTag) &&
+        html.slice(scan, scan + rawTextClose.length).toLowerCase() !== rawTextClose) {
+      const closingStart = findRawTextClose(html, rawTextTag, scan);
+      if (closingStart === -1) throw new Error('AhorraMás returned unterminated HTML markup');
+      const rawText = decodeHtml(html.slice(cursor, closingStart));
+      if (rawText) stack[stack.length - 1].text += rawText;
+      cursor = closingStart;
+      scan = closingStart;
+      continue;
+    }
+    const start = html.indexOf('<', scan);
+    if (start === -1) break;
+    scan = start + 1;
+    if (!/^<(?:!|\/?[A-Za-z])/.test(html.slice(start, start + 3))) continue;
+
+    const comment = html.startsWith('<!--', start);
+    const end = html.indexOf(comment ? '-->' : '>', scan);
+    if (end === -1) throw new Error('AhorraMás returned unterminated HTML markup');
+    scan = end + (comment ? 3 : 1);
+    const directText = decodeHtml(html.slice(cursor, start));
     if (directText) stack[stack.length - 1].text += directText;
 
-    const raw = match[0];
+    const raw = html.slice(start, scan);
     if (raw.startsWith('<!--') || raw.startsWith('<!')) {
-      cursor = token.lastIndex;
+      cursor = scan;
       continue;
     }
 
@@ -138,14 +183,14 @@ function parseHtml(html: string): HtmlNode {
           break;
         }
       }
-      cursor = token.lastIndex;
+      cursor = scan;
       continue;
     }
 
     const body = raw.slice(1, -1);
     const nameMatch = body.match(/^\s*([A-Za-z][\w:-]*)/);
     if (!nameMatch) {
-      cursor = token.lastIndex;
+      cursor = scan;
       continue;
     }
     const tag = nameMatch[1].toLowerCase();
@@ -157,7 +202,7 @@ function parseHtml(html: string): HtmlNode {
     };
     stack[stack.length - 1].children.push(node);
     if (!raw.endsWith('/>') && !VOID_TAGS.has(tag)) stack.push(node);
-    cursor = token.lastIndex;
+    cursor = scan;
   }
 
   const trailingText = decodeHtml(html.slice(cursor));
@@ -229,7 +274,7 @@ export function parsePrice(value: string | number | undefined): number | undefin
 
 /** Parse the retailer's rendered price-per-unit label into Product.unit_price. */
 export function parseUnitPrice(value: string | undefined): UnitPrice | undefined {
-  if (!value) return undefined;
+  if (!value || value.length > MAX_UNIT_PRICE_LABEL_LENGTH) return undefined;
   const match = value.match(
     /([\d.,]+)\s*(?:€|EUR)?\s*\/\s*(LITRO?|L|KILO?|KG|UNIDAD(?:ES)?|UDS?|U)\b/i
   );
@@ -392,6 +437,7 @@ export class AhorramasProvider implements GroceryProvider {
     this.http = axios.create({
       baseURL: AHORRAMAS_BASE,
       timeout: 15_000,
+      maxContentLength: AHORRAMAS_MAX_HTML_BYTES,
       headers: { Accept: 'text/html' },
     });
   }
