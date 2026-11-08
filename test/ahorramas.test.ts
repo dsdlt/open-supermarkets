@@ -85,9 +85,19 @@ async function main() {
     );
   });
 
+  await check('treats script and style contents as raw text', () => {
+    const html = `${fixture('ahorramas-products.html')}
+      <script type="application/ld+json">{"@type":"Product","sku":"raw-text","name":"Marker <!-- stays text","offers":{"price":"1.25","availability":"InStock"}}</script>
+      <style>.example::before { content: "<!--"; }</style>
+      <div class="product" data-pid="raw-text"></div>`;
+    const products = parseSearchPage(html);
+    assert.strictEqual(products.length, 4);
+    assert.strictEqual(products[3].name, 'Marker <!-- stays text');
+  });
+
   await check('bounds malformed-token processing in both exported parsers', () => {
     // A separate process lets the timeout interrupt a synchronous regression.
-    const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', `
+    const result = spawnSync(process.execPath, ['--require', 'tsx/cjs', '-e', `
       const assert = require('node:assert');
       const { parseSearchPage, parseProductTile } = require('./src/providers/ahorramas');
       for (const parse of [parseSearchPage, parseProductTile]) {

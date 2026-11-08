@@ -64,6 +64,21 @@ const VOID_TAGS = new Set([
   'wbr',
 ]);
 
+const RAW_TEXT_TAGS = new Set(['script', 'style']);
+
+/** Find a raw-text closing tag without treating its content as markup. */
+function findRawTextClose(html: string, tag: string, from: number): number {
+  const lowerHtml = html.toLowerCase();
+  const needle = `</${tag}`;
+  let index = lowerHtml.indexOf(needle, from);
+  while (index !== -1) {
+    const next = html[index + needle.length] ?? '';
+    if (next === '>' || /\s/.test(next)) return index;
+    index = lowerHtml.indexOf(needle, index + needle.length);
+  }
+  return -1;
+}
+
 function decodeHtml(value: string): string {
   return value
     .replace(/&nbsp;/gi, ' ')
@@ -130,6 +145,18 @@ function parseHtml(html: string): HtmlNode {
   // Advance past every scanned token. Never retry an unterminated suffix at
   // each nested '<', which makes an unanchored token regexp quadratic.
   while (scan < html.length) {
+    const rawTextTag = stack[stack.length - 1].tag;
+    const rawTextClose = `</${rawTextTag}`;
+    if (RAW_TEXT_TAGS.has(rawTextTag) &&
+        html.slice(scan, scan + rawTextClose.length).toLowerCase() !== rawTextClose) {
+      const closingStart = findRawTextClose(html, rawTextTag, scan);
+      if (closingStart === -1) throw new Error('AhorraMás returned unterminated HTML markup');
+      const rawText = decodeHtml(html.slice(cursor, closingStart));
+      if (rawText) stack[stack.length - 1].text += rawText;
+      cursor = closingStart;
+      scan = closingStart;
+      continue;
+    }
     const start = html.indexOf('<', scan);
     if (start === -1) break;
     scan = start + 1;
