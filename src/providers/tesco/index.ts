@@ -140,6 +140,7 @@ export class TescoProvider implements GroceryProvider {
   }
 
   async logout(): Promise<void> {
+    this.api.setAuthCookies('');
     clearSession();
   }
 
