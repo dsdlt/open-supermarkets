@@ -16,6 +16,8 @@ const SEARCH_PATH = '/buscador';
 const GRID_PATH =
   '/on/demandware.store/Sites-Ahorramas-Site/es/Search-UpdateGrid';
 export const AHORRAMAS_PAGE_SIZE = 20;
+// Bound regex work on untrusted labels; rendered unit prices are short.
+const MAX_UNIT_PRICE_LABEL_LENGTH = 256;
 
 interface HtmlNode {
   tag: string;
@@ -229,7 +231,7 @@ export function parsePrice(value: string | number | undefined): number | undefin
 
 /** Parse the retailer's rendered price-per-unit label into Product.unit_price. */
 export function parseUnitPrice(value: string | undefined): UnitPrice | undefined {
-  if (!value) return undefined;
+  if (!value || value.length > MAX_UNIT_PRICE_LABEL_LENGTH) return undefined;
   const match = value.match(
     /([\d.,]+)\s*(?:€|EUR)?\s*\/\s*(LITRO?|L|KILO?|KG|UNIDAD(?:ES)?|UDS?|U)\b/i
   );
