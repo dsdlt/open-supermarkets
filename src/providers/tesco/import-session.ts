@@ -19,7 +19,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { inferSessionExpiry, saveSession, TescoSession } from './auth';
+import { inferSessionExpiry, isTescoCookieDomain, saveSession, TescoSession } from './auth';
 
 export function importSession(filePath: string): void {
   const resolved = filePath.startsWith('~')
@@ -42,7 +42,11 @@ export function importSession(filePath: string): void {
     cookies = raw.cookies;
   } else {
     // Try to flatten object-of-arrays format
-    cookies = Object.values(raw).flat() as any[];
+    cookies = Object.entries(raw).flatMap(([domain, entries]) =>
+      isTescoCookieDomain(domain) && Array.isArray(entries)
+        ? entries.map(c => ({ ...c, domain: c?.domain ?? c?.Domain ?? domain }))
+        : []
+    );
   }
 
   if (cookies.length === 0) {
@@ -50,10 +54,10 @@ export function importSession(filePath: string): void {
   }
 
   // Normalise cookie shape to match Playwright format
-  const normalised = cookies.map((c: any) => ({
+  const normalised = cookies.filter(c => c && typeof c === 'object').map((c: any) => ({
     name: c.name || c.Name,
     value: c.value || c.Value,
-    domain: c.domain || c.Domain || '.tesco.com',
+    domain: c.domain ?? c.Domain,
     path: c.path || c.Path || '/',
     expires: c.expirationDate || c.expires || -1,
     httpOnly: c.httpOnly || c.HttpOnly || false,
@@ -61,10 +65,10 @@ export function importSession(filePath: string): void {
     sameSite: c.sameSite || c.SameSite || 'Lax',
   }));
 
-  const validCookies = normalised.filter((c: any) => c.name && c.value);
+  const validCookies = normalised.filter((c: any) => c.name && c.value && isTescoCookieDomain(c.domain));
 
   if (validCookies.length === 0) {
-    throw new Error('No usable cookies found in the file. Check the export includes name/value fields.');
+    throw new Error('No usable cookies found in the file. Check the export includes name/value fields and a Tesco UK cookie domain.');
   }
 
   const session: TescoSession = {

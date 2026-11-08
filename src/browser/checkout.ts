@@ -1,6 +1,7 @@
 import { chromium, Page } from 'playwright';
 import * as fs from 'fs';
 import * as os from 'os';
+import { savePrivateScreenshot } from './screenshot';
 
 export interface CheckoutResult {
   order_id: string;
@@ -75,7 +76,8 @@ export async function checkout(dryRun: boolean = true): Promise<CheckoutResult> 
       console.log('└─ No slot will be booked');
       console.log('└─ No payment will be requested');
       
-      await page.screenshot({ path: '/tmp/checkout-preview.png', fullPage: true });
+      const screenshotPath = await savePrivateScreenshot(page, 'checkout-preview.png');
+      console.log(`Screenshot saved: ${screenshotPath}`);
       
       return {
         order_id: 'DRY_RUN',
@@ -136,7 +138,8 @@ export async function checkout(dryRun: boolean = true): Promise<CheckoutResult> 
     const deliveryCostMatch = finalPageText?.match(/Delivery[:\s]*£(\d+\.?\d*)/i);
     const deliveryCost = deliveryCostMatch ? parseFloat(deliveryCostMatch[1]) : 0;
     
-    await page.screenshot({ path: '/tmp/checkout-payment-page.png', fullPage: true });
+    const screenshotPath = await savePrivateScreenshot(page, 'checkout-payment-page.png');
+    console.log(`Screenshot saved: ${screenshotPath}`);
     
     console.log('\n📊 Order Summary:');
     console.log(`├─ Items total: £${total}`);

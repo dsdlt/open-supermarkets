@@ -8,6 +8,7 @@
 import { chromium, Page } from 'playwright';
 import * as fs from 'fs';
 import * as os from 'os';
+import { savePrivateScreenshot } from './screenshot';
 
 const SESSION_FILE = `${os.homedir()}/.tesco/session.json`;
 
@@ -102,8 +103,8 @@ export async function getTescoSlots(headless: boolean = true): Promise<TescoSlot
       if (bodyText?.includes('£40') || bodyText?.includes('minimum')) {
         throw new Error('Basket does not meet the minimum spend for Tesco delivery. Add more items first.');
       }
-      await page.screenshot({ path: '/tmp/tesco-slots-debug.png', fullPage: true });
-      throw new Error('No Tesco slots found. Check /tmp/tesco-slots-debug.png for page state.');
+      const screenshotPath = await savePrivateScreenshot(page, 'tesco-slots-debug.png');
+      throw new Error(`No Tesco slots found. Check ${screenshotPath} for page state.`);
     }
 
     return slots;
