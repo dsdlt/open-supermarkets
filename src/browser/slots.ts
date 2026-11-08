@@ -1,6 +1,7 @@
 import { chromium, Page } from 'playwright';
 import * as fs from 'fs';
 import * as os from 'os';
+import { savePrivateScreenshot } from './screenshot';
 
 export interface Slot {
   slot_id: string;
@@ -99,8 +100,8 @@ export async function getSlots(headless: boolean = true): Promise<Slot[]> {
       }
       
       // Save debug info
-      await page.screenshot({ path: '/tmp/slots-debug.png', fullPage: true });
-      throw new Error('No slots found on page. Check /tmp/slots-debug.png for details.');
+      const screenshotPath = await savePrivateScreenshot(page, 'slots-debug.png');
+      throw new Error(`No slots found on page. Check ${screenshotPath} for details.`);
     }
     
     return slots;
