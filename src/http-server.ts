@@ -18,10 +18,20 @@ type FavouritesProvider = FullGroceryProvider & {
 };
 
 // SUPERMARKET_* preferred; GROC_* still honoured for pre-3.0 setups.
-const host = process.env.SUPERMARKET_API_HOST || process.env.GROC_API_HOST || '127.0.0.1';
+const host = parseHost(process.env.SUPERMARKET_API_HOST || process.env.GROC_API_HOST || '127.0.0.1');
 const port = parsePort(process.env.SUPERMARKET_API_PORT || process.env.GROC_API_PORT || '7876');
 const defaultProvider = process.env.SUPERMARKET_PROVIDER || process.env.GROC_PROVIDER || 'sainsburys';
 const apiToken = process.env.SUPERMARKET_API_TOKEN || process.env.GROC_API_TOKEN;
+
+function parseHost(value: string): string {
+  // Resolve localhost ourselves so DNS/hosts configuration cannot expose HTTP.
+  if (value === 'localhost') return '127.0.0.1';
+  if (value === '127.0.0.1' || value === '::1') return value;
+  throw new Error(
+    'SUPERMARKET_API_HOST (or GROC_API_HOST) must be 127.0.0.1, ::1, or localhost. ' +
+    'For remote access, use a TLS proxy on the same host forwarding to loopback; see docs/API.md.'
+  );
+}
 
 function parsePort(value: string): number {
   const parsed = Number(value);
@@ -196,8 +206,5 @@ server.listen(port, host, () => {
   console.log(`Provider: ${defaultProvider}`);
   if (!apiToken) {
     console.log('No SUPERMARKET_API_TOKEN set; relying on localhost binding for access control.');
-  }
-  if (host !== '127.0.0.1' && host !== 'localhost' && !apiToken) {
-    console.warn('WARNING: API is not bound to localhost and has no token. Set SUPERMARKET_API_TOKEN.');
   }
 });
