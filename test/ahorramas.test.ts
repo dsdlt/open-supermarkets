@@ -55,6 +55,24 @@ async function main() {
     assert.strictEqual(parseUnitPrice('2,50€'), undefined);
   });
 
+  await check('bounds untrusted unit-price labels before matching', () => {
+    const label = '0,84€/LITRO';
+    assert.deepStrictEqual(parseUnitPrice(label.padStart(256)), { measure: 'LITRO', price: 0.84 });
+    assert.strictEqual(parseUnitPrice(label.padStart(257)), undefined);
+    assert.strictEqual(parseUnitPrice('9'.repeat(100_000)), undefined);
+    assert.strictEqual(parseUnitPrice('9'.repeat(100_000) + '€/KILO'), undefined);
+    assert.strictEqual(parseUnitPrice('9'.repeat(256)), undefined);
+  });
+
+  await check('omits oversized HTML unit prices while preserving the product', () => {
+    const html = fixture('ahorramas-products.html').replace('0,84€/LITRO', '9'.repeat(100_000));
+    const products = parseSearchPage(html);
+    assert.strictEqual(products.length, 3);
+    assert.strictEqual(products[0].unit_price, undefined);
+    assert.deepStrictEqual(products[0].retail_price, { price: 0.84 });
+    assert.deepStrictEqual(products[1].unit_price, { measure: 'KILO', price: 8.95 });
+  });
+
   await check('returns an empty array for a genuine no-results page', () => {
     assert.deepStrictEqual(parseSearchPage(fixture('ahorramas-no-results.html')), []);
   });
