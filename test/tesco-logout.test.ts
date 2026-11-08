@@ -16,7 +16,7 @@ async function main() {
   try {
     fs.mkdirSync(path.dirname(sessionFile));
     fs.writeFileSync(sessionFile, JSON.stringify({
-      cookies: [{ name: 'session', value: 'synthetic-account' }],
+      cookies: [{ name: 'session', value: 'synthetic-account', domain: '.tesco.com' }],
       expiresAt: new Date(Date.now() + 3600000).toISOString(),
     }));
     const provider = new TescoProvider();
