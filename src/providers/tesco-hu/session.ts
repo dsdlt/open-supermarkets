@@ -24,6 +24,13 @@ export const SESSION_FILE = path.join(CONFIG_DIR, 'session.json');
 
 const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const COOKIE_DOMAIN = '.tesco.hu';
+// Explicit storefront/login -> xapi credential mapping; this is not a browser
+// cookie jar. Do not include other Tesco markets or arbitrary subdomains.
+const COOKIE_DOMAINS = new Set(['tesco.hu', 'www.tesco.hu', 'bevasarlas.tesco.hu', 'xapi.tesco.com']);
+function isAllowedCookieDomain(domain: unknown): domain is string {
+  return typeof domain === 'string' && COOKIE_DOMAINS.has(domain.toLowerCase().replace(/^\./, ''));
+}
+
 const AUTH_COOKIE_RE = /(auth|oauth|token|session|sid|sso|identity|access|refresh|jwt|tesco)/i;
 
 export interface SessionCookie {
@@ -120,24 +127,30 @@ export function normaliseCookieExport(raw: unknown): SessionCookie[] {
   let list: any[];
   if (Array.isArray(raw)) list = raw;
   else if (raw && typeof raw === 'object' && Array.isArray((raw as any).cookies)) list = (raw as any).cookies;
-  else if (raw && typeof raw === 'object') list = Object.values(raw as Record<string, unknown>).flat() as any[];
+  else if (raw && typeof raw === 'object') {
+    list = Object.entries(raw as Record<string, unknown>)
+      .filter(([domain]) => isAllowedCookieDomain(domain))
+      .flatMap(([domain, entries]) => Array.isArray(entries)
+        ? entries.map(c => ({ ...c, domain: c?.domain ?? c?.Domain ?? domain }))
+        : []);
+  }
   else list = [];
 
   const cookies = list
     .map((c: any): SessionCookie => ({
       name: c?.name ?? c?.Name,
       value: c?.value ?? c?.Value,
-      domain: c?.domain ?? c?.Domain ?? COOKIE_DOMAIN,
+      domain: c?.domain ?? c?.Domain,
       path: c?.path ?? c?.Path ?? '/',
       expires: Number(c?.expirationDate ?? c?.expires ?? -1),
       httpOnly: Boolean(c?.httpOnly ?? c?.HttpOnly ?? false),
       secure: Boolean(c?.secure ?? c?.Secure ?? false),
       sameSite: String(c?.sameSite ?? c?.SameSite ?? 'Lax'),
     }))
-    .filter(c => c.name && c.value);
+    .filter(c => c.name && c.value && isAllowedCookieDomain(c.domain));
 
   if (cookies.length === 0) {
-    throw new Error('No usable cookies found in the file. Check the export includes name/value fields.');
+    throw new Error('No usable cookies found in the file. Include name/value fields and a permitted Tesco Hungary or xapi domain.');
   }
   return cookies;
 }
@@ -173,7 +186,7 @@ export function clearSession(file: string = SESSION_FILE): void {
 }
 
 export function getCookieString(session: TescoHuSession): string {
-  return session.cookies.map(c => `${c.name}=${c.value}`).join('; ');
+  return session.cookies.filter(c => isAllowedCookieDomain(c.domain)).map(c => `${c.name}=${c.value}`).join('; ');
 }
 
 function sessionFrom(cookies: SessionCookie[]): TescoHuSession {
