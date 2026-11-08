@@ -24,6 +24,14 @@ const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 const AUTH_COOKIE_RE = /(auth|oauth|token|session|sid|sso|identity|access|refresh|jwt|tesco)/i;
 
+/** UK storefront cookies are deliberately forwarded to xapi for API auth. */
+export function isTescoCookieDomain(domain: unknown): boolean {
+  if (typeof domain !== 'string') return false;
+  return ['tesco.com', 'www.tesco.com', 'xapi.tesco.com'].includes(
+    domain.toLowerCase().replace(/^\./, '')
+  );
+}
+
 export interface TescoSession {
   cookies: any[];
   expiresAt: string;
@@ -274,7 +282,7 @@ export function saveSession(session: TescoSession): void {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
   }
-  fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
+  fs.writeFileSync(SESSION_FILE, JSON.stringify({ ...session, cookies: session.cookies.filter(c => isTescoCookieDomain(c?.domain)) }, null, 2), { mode: 0o600 });
   console.log(`💾 Tesco session saved to ${SESSION_FILE}`);
 }
 
@@ -310,7 +318,8 @@ export function loadSession(): TescoSession | null {
 }
 
 export function getCookieString(session: TescoSession): string {
-  return session.cookies.map(c => `${c.name}=${c.value}`).join('; ');
+  return session.cookies.filter(c => isTescoCookieDomain(c?.domain))
+    .map(c => `${c.name}=${c.value}`).join('; ');
 }
 
 export function clearSession(): void {
