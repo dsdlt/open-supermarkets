@@ -18,6 +18,8 @@ const GRID_PATH =
 export const AHORRAMAS_PAGE_SIZE = 20;
 /** Maximum UTF-8 HTML size accepted by either string parser and HTTP search responses. */
 export const AHORRAMAS_MAX_HTML_BYTES = 5 * 1024 * 1024;
+/** Bound regex work on untrusted labels; rendered unit prices are short. */
+const MAX_UNIT_PRICE_LABEL_LENGTH = 256;
 
 interface HtmlNode {
   tag: string;
@@ -245,7 +247,7 @@ export function parsePrice(value: string | number | undefined): number | undefin
 
 /** Parse the retailer's rendered price-per-unit label into Product.unit_price. */
 export function parseUnitPrice(value: string | undefined): UnitPrice | undefined {
-  if (!value) return undefined;
+  if (!value || value.length > MAX_UNIT_PRICE_LABEL_LENGTH) return undefined;
   const match = value.match(
     /([\d.,]+)\s*(?:€|EUR)?\s*\/\s*(LITRO?|L|KILO?|KG|UNIDAD(?:ES)?|UDS?|U)\b/i
   );
