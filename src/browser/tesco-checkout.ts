@@ -11,7 +11,6 @@
 import { chromium, Page } from 'playwright';
 import * as fs from 'fs';
 import * as os from 'os';
-import { savePrivateScreenshot } from './screenshot';
 
 const SESSION_FILE = `${os.homedir()}/.tesco/session.json`;
 
