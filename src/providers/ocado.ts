@@ -88,6 +88,33 @@ interface OcadoSession {
   savedAt: string;
 }
 
+/** Keep only cookies whose explicit scope belongs to the supported storefront. */
+function scopedCookies(cookies: any[]): any[] {
+  return cookies.filter(c => c && typeof c.domain === 'string' &&
+    ['ocado.com', '.ocado.com', 'www.ocado.com', '.www.ocado.com'].includes(c.domain.toLowerCase()) &&
+    typeof c.name === 'string' && /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(c.name) &&
+    typeof c.value === 'string' && /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*$/.test(c.value) &&
+    typeof c.path === 'string' && c.path.startsWith('/') &&
+    (c.expires === undefined || (typeof c.expires === 'number' && Number.isFinite(c.expires))));
+}
+
+/** Select cookies anew for every request, including redirects and expiry. */
+function cookieHeader(cookies: any[], url: URL): string {
+  if (url.origin !== BASE_URL) throw new Error('Refusing request outside the Ocado storefront');
+  return cookies.filter(c => {
+    const domain = c.domain.toLowerCase();
+    const host = domain.replace(/^\./, '');
+    const domainMatch = url.hostname === host ||
+      (c.hostOnly !== true && (c.hostOnly === false || domain.startsWith('.')) &&
+        url.hostname.endsWith(`.${host}`));
+    const pathMatch = url.pathname === c.path ||
+      (url.pathname.startsWith(c.path) && (c.path.endsWith('/') || url.pathname[c.path.length] === '/'));
+    return domainMatch && pathMatch && (!c.secure || url.protocol === 'https:') &&
+      (c.expires === undefined || c.expires === -1 || c.expires > Date.now() / 1000);
+  }).sort((a, b) => b.path.length - a.path.length)
+    .map(c => `${c.name}=${c.value}`).join('; ');
+}
+
 function ask(question: string): Promise<string> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(resolve => {
@@ -201,15 +228,25 @@ export class OcadoProvider implements GroceryProvider {
   readonly name = 'ocado';
   private client: AxiosInstance;
   private csrfToken: string | null = null;
+  private cookies: any[] = [];
 
   constructor() {
     this.client = axios.create({
       baseURL: BASE_URL,
       maxRedirects: 5,
+      beforeRedirect: options => {
+        const url = new URL(`${options.protocol}//${options.hostname}${options.port ? `:${options.port}` : ''}${options.path}`);
+        options.headers.Cookie = cookieHeader(this.cookies, url);
+      },
       headers: {
         'User-Agent': USER_AGENT,
         'Accept': 'application/json',
       },
+    });
+    this.client.interceptors.request.use(config => {
+      const url = new URL(this.client.getUri(config), BASE_URL);
+      config.headers.set('Cookie', cookieHeader(this.cookies, url) || undefined);
+      return config;
     });
     this.loadSession();
   }
@@ -221,8 +258,7 @@ export class OcadoProvider implements GroceryProvider {
       if (!fs.existsSync(SESSION_FILE)) return;
       const session: OcadoSession = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf-8'));
       if (session.cookies?.length) {
-        this.client.defaults.headers.common['Cookie'] =
-          session.cookies.map((c: any) => `${c.name}=${c.value}`).join('; ');
+        this.cookies = scopedCookies(session.cookies);
       }
     } catch {
       // Ignore corrupt session — isAuthenticated() will report false.
@@ -231,7 +267,7 @@ export class OcadoProvider implements GroceryProvider {
 
   static saveSession(cookies: any[]): void {
     if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
-    const session: OcadoSession = { cookies, savedAt: new Date().toISOString() };
+    const session: OcadoSession = { cookies: scopedCookies(cookies), savedAt: new Date().toISOString() };
     fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2), { mode: 0o600 });
   }
 
@@ -282,8 +318,7 @@ export class OcadoProvider implements GroceryProvider {
 
       const cookies = await context.cookies();
       OcadoProvider.saveSession(cookies);
-      this.client.defaults.headers.common['Cookie'] =
-        cookies.map((c: any) => `${c.name}=${c.value}`).join('; ');
+      this.cookies = scopedCookies(cookies);
     } finally {
       await browser.close();
     }
@@ -291,7 +326,7 @@ export class OcadoProvider implements GroceryProvider {
 
   async logout(): Promise<void> {
     if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
-    delete this.client.defaults.headers.common['Cookie'];
+    this.cookies = [];
     this.csrfToken = null;
   }
 
@@ -690,18 +725,20 @@ export function importSession(filePath: string): void {
   else cookies = Object.values(raw).flat() as any[];
 
   cookies = cookies
-    .filter((c: any) => (c.name || c.Name) && (c.value !== undefined || c.Value !== undefined))
+    .filter((c: any) => c && (c.name || c.Name) && (c.value !== undefined || c.Value !== undefined))
     .map((c: any) => ({
       name: c.name ?? c.Name,
       value: c.value ?? c.Value,
-      domain: c.domain ?? c.Domain ?? '.ocado.com',
+      domain: c.domain ?? c.Domain,
+      hostOnly: c.hostOnly,
       path: c.path ?? c.Path ?? '/',
       expires: c.expirationDate ?? c.expires ?? -1,
       httpOnly: c.httpOnly ?? c.HttpOnly ?? false,
       secure: c.secure ?? c.Secure ?? false,
       sameSite: c.sameSite ?? c.SameSite ?? 'Lax',
     }));
-  if (cookies.length === 0) throw new Error('No cookies found in the file — check the export format.');
+  cookies = scopedCookies(cookies);
+  if (cookies.length === 0) throw new Error('No scoped Ocado cookies found in the file — check the export format and domain metadata.');
 
   OcadoProvider.saveSession(cookies);
   console.log(`✅ Imported ${cookies.length} cookies to ${SESSION_FILE}`);
